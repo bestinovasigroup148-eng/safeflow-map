@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>SafeFlow – UKM Bangi Flood Evacuation Map</title>
+<title>SafeFlow – UKM Bangi Live Evacuation Map</title>
 
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
 <link rel="stylesheet" href="https://unpkg.com/leaflet-routing-machine/dist/leaflet-routing-machine.css"/>
@@ -47,7 +47,7 @@ html, body { height:100%; margin:0; }
 
 <script>
 /*************************************************
- * MAP INIT — UKM BANGI
+ * MAP INIT
  *************************************************/
 const map = L.map("map").setView([2.94, 101.76], 13);
 
@@ -56,17 +56,17 @@ L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
 }).addTo(map);
 
 /*************************************************
- * FIREBASE — LIVE SENSOR DATA
+ * FIREBASE (RISK ONLY)
  *************************************************/
 const FIREBASE_URL =
-  "https://safeflow-68707-default-rtdb.asia-southeast1.firebasedatabase.app/sensors/A.json";
+"https://safeflow-68707-default-rtdb.asia-southeast1.firebasedatabase.app/sensors/A.json";
 
 async function fetchFirebaseData(){
-  try {
+  try{
     const res = await fetch(FIREBASE_URL);
     return await res.json();
-  } catch (e) {
-    console.error("Firebase error", e);
+  }catch(e){
+    console.error("Firebase error",e);
     return null;
   }
 }
@@ -89,23 +89,23 @@ const shelterIcon = L.divIcon({
 });
 
 /*************************************************
- * SAFE SHELTER (HIGH GROUND)
+ * SAFE SHELTER (FIXED)
  *************************************************/
 const shelterLatLng = L.latLng(2.9500, 101.7200);
 
 L.marker(shelterLatLng,{icon:shelterIcon})
- .bindPopup("<b>SAFE SHELTER</b><br>High Ground Evacuation Area")
+ .bindPopup("<b>SAFE SHELTER</b><br>High Ground")
  .addTo(map);
 
 /*************************************************
- * FLOOD ZONES — UKM
+ * FLOOD ZONES (FIXED)
  *************************************************/
 const floodZones = [
   { name:"UKM Bangi Lowland", lat:2.9316, lng:101.7712, offset:30 },
   { name:"Bandar Baru Bangi Section 15", lat:2.9636, lng:101.7554, offset:40 },
   { name:"Sungai Langat Floodplain", lat:2.9781, lng:101.7898, offset:45 },
   { name:"Nexus International School", lat:2.9289, lng:101.6879, offset:30 },
-  { name:"KTM UKM (KB07) Area", lat:2.9229, lng:101.7651, offset:25 },
+  { name:"KTM UKM (KB07)", lat:2.9229, lng:101.7651, offset:25 },
   { name:"Bangunan Sains Kimia UKM", lat:2.9248, lng:101.7746, offset:20 }
 ];
 
@@ -118,9 +118,9 @@ let routingControl = null;
 let userMarker = null;
 
 /*************************************************
- * SINGLE RED EVACUATION ROUTE
+ * ROUTING (USER → SHELTER)
  *************************************************/
-function startOrUpdateRoute(lat,lng){
+function updateRoute(lat,lng){
   if(!routingControl){
     routingControl = L.Routing.control({
       waypoints:[
@@ -130,7 +130,6 @@ function startOrUpdateRoute(lat,lng){
       createMarker:()=>null,
       addWaypoints:false,
       draggableWaypoints:false,
-      routeWhileDragging:false,
       showAlternatives:false,
       lineOptions:{
         styles:[{color:"red",weight:6,opacity:0.9}]
@@ -145,38 +144,50 @@ function startOrUpdateRoute(lat,lng){
 }
 
 /*************************************************
- * SENSOR LOCATION (FROM FIREBASE)  ✅ REPLACED
+ * LIVE USER GPS TRACKING
  *************************************************/
-async function getUserLocation(){
-  const sensor = await fetchFirebaseData();
-  if(!sensor) return;
+function startLiveLocation(){
 
-  // robust check (allows 0 values)
-  if(sensor.lat === undefined || sensor.lng === undefined) return;
-
-  const lat = Number(sensor.lat);
-  const lng = Number(sensor.lng);
-
-  if(!userMarker){
-    userMarker = L.marker([lat,lng],{icon:userIcon})
-      .bindPopup("<b>SENSOR LOCATION</b><br>ESP32 Node")
-      .addTo(map);
-  } else {
-    userMarker.setLatLng([lat,lng]);
+  if(!navigator.geolocation){
+    alert("Geolocation not supported");
+    return;
   }
 
-  startOrUpdateRoute(lat,lng);
+  navigator.geolocation.watchPosition(
+    (pos)=>{
+      const lat = pos.coords.latitude;
+      const lng = pos.coords.longitude;
+
+      if(!userMarker){
+        userMarker = L.marker([lat,lng],{icon:userIcon})
+          .bindPopup("<b>You (Live Location)</b>")
+          .addTo(map);
+        map.setView([lat,lng],15);
+      }else{
+        userMarker.setLatLng([lat,lng]);
+      }
+
+      updateRoute(lat,lng);
+    },
+    (err)=>{
+      console.error("GPS error:",err);
+    },
+    {
+      enableHighAccuracy:true,
+      maximumAge:2000,
+      timeout:10000
+    }
+  );
 }
 
 /*************************************************
- * MAP UPDATE — LIVE FIREBASE DATA
+ * MAP UPDATE (RISK + HEATMAP)
  *************************************************/
 async function updateMap(){
   const sensor = await fetchFirebaseData();
   if(!sensor || sensor.risk === undefined) return;
 
   const baseRisk = sensor.risk;
-
   const features = [];
   const heatData = [];
 
@@ -190,7 +201,7 @@ async function updateMap(){
       properties:{name:z.name,risk,color}
     });
 
-    heatData.push([z.lat, z.lng, risk / 50]);
+    heatData.push([z.lat, z.lng, risk/50]);
   });
 
   if(geoLayer) geoLayer.remove();
@@ -215,14 +226,7 @@ async function updateMap(){
   heatLayer = L.heatLayer(heatData,{
     radius:120,
     blur:70,
-    maxZoom:15,
-    gradient:{
-      0.2:"#00f",
-      0.4:"#0f0",
-      0.6:"#ff0",
-      0.8:"#f90",
-      1.0:"#f00"
-    }
+    maxZoom:15
   }).addTo(map);
 }
 
@@ -234,13 +238,11 @@ legend.onAdd = function(){
   const div = L.DomUtil.create("div","legend");
   div.innerHTML = `
     <b>Legend</b><br>
-    🏃 Sensor Node<br>
-    🏠 Safe Shelter<br>
-    <hr>
+    🏃 Live User<br>
+    🏠 Safe Shelter<br><hr>
     <i class="circle" style="background:red"></i> High Risk<br>
     <i class="circle" style="background:yellow"></i> Moderate Risk<br>
-    <i class="circle" style="background:green"></i> Low Risk<br>
-    <hr>
+    <i class="circle" style="background:green"></i> Low Risk<br><hr>
     <b style="color:red">━ Evacuation Route</b>
   `;
   return div;
@@ -248,13 +250,11 @@ legend.onAdd = function(){
 legend.addTo(map);
 
 /*************************************************
- * START SYSTEM — LIVE
+ * START SYSTEM
  *************************************************/
 updateMap();
-getUserLocation();
-
+startLiveLocation();
 setInterval(updateMap,3000);
-setInterval(getUserLocation,5000);
 </script>
 </body>
 </html>
